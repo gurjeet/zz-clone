@@ -6,11 +6,14 @@ use std::collections::HashMap;
 use super::name::Name;
 use super::loader;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use super::makro;
 
 static ABORT: AtomicBool = AtomicBool::new(false);
 
+#[derive(Clone)]
 pub struct Ext {
-    pub ext: HashMap<Name, ast::Local>,
+    pub ext: Arc<Mutex<HashMap<Name, ast::Local>>>
 }
 
 impl Ext {
@@ -29,7 +32,9 @@ impl Ext {
                 needs:      Vec::new(),
             },
         });
-        Ext{ext}
+        Ext{
+            ext: Arc::new(Mutex::new(ext)),
+        }
     }
 }
 
@@ -43,6 +48,8 @@ struct InScope {
 #[derive(Default)]
 struct Scope {
     v: Vec<HashMap<String, InScope>>,
+    macros_available:   bool,
+    complete:         std::cell::RefCell<bool>,
 }
 
 
@@ -480,7 +487,7 @@ fn abs_expr(
                 abs_expr(arg, scope, inbody, all_modules, self_md_name);
             }
         },
-        ast::Expression::MacroCall { loc, ref mut name, args, ..} => {
+        ast::Expression::MacroCall { loc, ref mut name, ref mut args, ..} => {
             let mut t = ast::Typed {
                 t:      ast::Type::Other(name.clone()),
                 loc:    loc.clone(),
@@ -494,8 +501,24 @@ fn abs_expr(
                 unreachable!()
             };
 
-            for arg in args {
+            for arg in args.iter_mut() {
                 abs_expr(arg, scope, inbody, all_modules, self_md_name);
+            }
+
+            match makro::expr(name, loc, args)
+            {
+                Ok(expr2) => {
+                    *expr = expr2;
+                    abs_expr(expr, scope, inbody, all_modules, self_md_name);
+                }
+                Err(e) => {
+                    if scope.macros_available {
+                        emit_error(e.message, &e.details);
+                        std::process::exit(9);
+                    } else {
+                        scope.complete.replace(false);
+                    }
+                }
             }
         },
         ast::Expression::Infix {lhs, rhs,.. } => {
@@ -605,10 +628,13 @@ fn abs_block(
     }
 }
 
-pub fn abs(md: &mut ast::Module, all_modules: &HashMap<Name, loader::Module>, ext: &mut Ext) {
+pub fn abs(md: &mut ast::Module, all_modules: &HashMap<Name, loader::Module>, ext: Ext, macros_available: bool) -> bool
+{
     debug!("abs {}", md.name);
 
     let mut scope = Scope::default();
+    scope.macros_available = macros_available;
+    scope.complete.replace(true);
     scope.push();
 
     let newimports = Vec::new();
@@ -798,10 +824,8 @@ pub fn abs(md: &mut ast::Module, all_modules: &HashMap<Name, loader::Module>, ex
                     if let ast::Type::Other(ref mut name) = &mut field.typed.t{
                         check_abs_available(name, &ast.vis, all_modules, &field.typed.loc, &md.name);
                     }
-                    if let Some(ref mut array) = &mut field.array {
-                        if let Some(array) = array {
-                            abs_expr(array, &scope, false, all_modules, &md.name);
-                        }
+                    if let ast::Array::Sized(ref mut array) = &mut field.array {
+                        abs_expr(array, &scope, false, all_modules, &md.name);
                     }
 
                     match field.typed.tail {
@@ -844,7 +868,7 @@ pub fn abs(md: &mut ast::Module, all_modules: &HashMap<Name, loader::Module>, ex
         if import.name.0[1] == "ext" {
 
 
-            if let Some(previous) = ext.ext.get(&import.name) {
+            if let Some(previous) = ext.ext.lock().unwrap().get(&import.name) {
                 if let ast::Def::Include{inline,..} = previous.def {
                     if inline != import.inline {
                         emit_error(format!("conflicting import modes"), &[
@@ -868,7 +892,7 @@ pub fn abs(md: &mut ast::Module, all_modules: &HashMap<Name, loader::Module>, ex
                 expr = (&expr[1..expr.len() - 1]).to_string();
             }
 
-            ext.ext.insert(import.name.clone(), ast::Local {
+            ext.ext.lock().unwrap().insert(import.name.clone(), ast::Local {
                 doc:        String::new(),
                 name:       import.name.to_string(),
                 vis:        ast::Visibility::Object,
@@ -890,6 +914,7 @@ pub fn abs(md: &mut ast::Module, all_modules: &HashMap<Name, loader::Module>, ex
         std::process::exit(9);
     }
 
+    return scope.complete.into_inner();
 }
 
 

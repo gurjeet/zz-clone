@@ -45,6 +45,7 @@ pub fn expr(name: &Name, loc: &ast::Location, args: &Vec<Box<ast::Expression>>) 
 
     let mut n = String::new();
     cmd.stdout.as_mut().unwrap().read_to_string(&mut n).unwrap();
+
     let (path, source) = ast::generated_source(&format!("{}", loc), n);
 
     let mut pp = match parser::ZZParser::parse(parser::Rule::expr, source) {

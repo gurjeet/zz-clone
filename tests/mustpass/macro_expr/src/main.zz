@@ -21,7 +21,7 @@ export macro repeat()  {
 
 
 export macro make_int() {
-    printf("\"\"");
+    printf("1");
 }
 
 export fn main() -> int {

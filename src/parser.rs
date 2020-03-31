@@ -64,7 +64,7 @@ fn p(n: &Path, features: &HashMap<String, bool> , stage: &Stage) -> Result<Modul
     module.name.push(n.file_stem().expect(&format!("stem {:?}", n)).to_string_lossy().into());
 
     let n = &n.to_string_lossy().to_string();
-    let file_str = read_source(n.clone());
+    let (file_str,_) = read_source(n.clone());
 
     let mut file = ZZParser::parse(Rule::file, file_str)?;
     let mut doccomments = String::new();
@@ -385,14 +385,14 @@ fn p(n: &Path, features: &HashMap<String, bool> , stage: &Stage) -> Result<Modul
                             let TypedName{typed, name, tags} = parse_named_type(n, part.next().unwrap());
 
                             let array = match part.next() {
-                                None => None,
+                                None => Array::None,
                                 Some(array) => {
                                     match array.into_inner().next() {
                                         Some(expr) => {
-                                            Some(Some(parse_expr(n, expr)))
+                                            Array::Sized(parse_expr(n, expr))
                                         },
                                         None => {
-                                            Some(None)
+                                            Array::Unsized
                                         }
                                     }
                                 }
@@ -490,7 +490,7 @@ fn p(n: &Path, features: &HashMap<String, bool> , stage: &Stage) -> Result<Modul
                 let mut vis     = Visibility::Object;
                 let mut typed   = None;
                 let mut expr    = None;
-                let mut array   = None;
+                let mut array   = Array::None;
 
                 for part in decl.into_inner() {
                     match part.as_rule() {
@@ -533,9 +533,9 @@ fn p(n: &Path, features: &HashMap<String, bool> , stage: &Stage) -> Result<Modul
                         }
                         Rule::array => {
                             if let Some(expr) = part.into_inner().next() {
-                                array = Some(Some(parse_expr(n, expr)));
+                                array = Array::Sized(parse_expr(n, expr));
                             } else {
-                                array = Some(None);
+                                array = Array::Unsized;
                             }
                         }
                         e => panic!("unexpected rule {:?} in static", e),
